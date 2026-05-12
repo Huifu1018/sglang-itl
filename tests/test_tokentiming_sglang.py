@@ -2,8 +2,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
 from tokentiming.sglang.candidates import build_linear_candidate_rows
 from tokentiming.sglang.config import TokenITLSGLangConfig
+from tokentiming.sglang.proposer import _clone_nested_tensors
 from tokentiming.sglang.validation import validate_server_args
 
 
@@ -34,6 +40,19 @@ class TokenITLSGLangValidationTest(unittest.TestCase):
             config = TokenITLSGLangConfig.from_env()
 
         self.assertIsNone(config.metrics_log_interval)
+
+    def test_config_defaults_to_cloned_draft_cache(self):
+        config = TokenITLSGLangConfig.from_env()
+
+        self.assertTrue(config.clone_draft_cache)
+
+    @unittest.skipIf(torch is None, "torch is not installed")
+    def test_nested_tensor_clone_does_not_alias(self):
+        source = ((torch.tensor([1, 2]), torch.tensor([3])),)
+        cloned = _clone_nested_tensors(source)
+        source[0][0][0] = 99
+
+        self.assertEqual(int(cloned[0][0][0]), 1)
 
     def test_validation_sets_spec_v1_defaults(self):
         args = SimpleNamespace(

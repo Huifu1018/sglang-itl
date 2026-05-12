@@ -30,7 +30,9 @@ def _env_float(name: str, default: float | None) -> float | None:
     if value.strip().lower() in {"0", "false", "off", "none"}:
         return None
     parsed = float(value)
-    if parsed <= 0:
+    if parsed == 0:
+        return None
+    if parsed < 0:
         raise ValueError(f"{name} must be positive when set.")
     return parsed
 
@@ -53,6 +55,7 @@ class TokenITLSGLangConfig:
     add_special_tokens: bool = False
     disable_cuda_graph: bool = True
     enable_draft_cache: bool = True
+    clone_draft_cache: bool = True
     metrics_log_interval: float | None = 60.0
 
     @classmethod
@@ -68,5 +71,6 @@ class TokenITLSGLangConfig:
             add_special_tokens=_env_bool("TOKEN_ITL_ADD_SPECIAL_TOKENS", False),
             disable_cuda_graph=_env_bool("TOKEN_ITL_DISABLE_CUDA_GRAPH", True),
             enable_draft_cache=_env_bool("TOKEN_ITL_ENABLE_DRAFT_CACHE", True),
+            clone_draft_cache=_env_bool("TOKEN_ITL_CLONE_DRAFT_CACHE", True),
             metrics_log_interval=_env_float("TOKEN_ITL_METRICS_LOG_INTERVAL", 60.0),
         )

@@ -17,6 +17,21 @@ load only this plugin when several SGLang plugins are installed:
 export SGLANG_PLUGINS=token_itl
 ```
 
+## Preflight
+
+Run this on the deployment host. It verifies the installed package, SGLang
+plugin entry point, `TOKEN_ITL` registry, CUDA availability, and optional
+target/draft model configs without loading model weights.
+
+```bash
+python scripts/sglang_token_itl_preflight.py \
+  --target nvidia/MiniMax-M2.7-NVFP4 \
+  --draft Qwen/Qwen2.5-1.5B-Instruct
+```
+
+On a non-GPU development machine, use `--allow-no-cuda` only to validate the
+Python/package wiring.
+
 ## Start A Server
 
 ```bash
@@ -24,6 +39,7 @@ export TOKEN_ITL_DRAFT_DEVICE=cuda:0
 export TOKEN_ITL_DRAFT_DTYPE=bfloat16
 export TOKEN_ITL_DTW_WINDOW=8
 export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
+export TOKEN_ITL_CLONE_DRAFT_CACHE=true
 export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
 python -m sglang.launch_server \
@@ -74,6 +90,11 @@ context window than the target.
 `TOKEN_ITL_ENABLE_DRAFT_CACHE`: keep per-request HF `past_key_values` caches.
 Default: `true`.
 
+`TOKEN_ITL_CLONE_DRAFT_CACHE`: clone/fork cached draft KV before speculative
+proposal generation. Default: `true`, which prevents unaccepted draft tokens
+from mutating the confirmed per-request context cache on HF cache
+implementations that update in place.
+
 `TOKEN_ITL_MAX_CACHED_REQUESTS`: LRU cap for draft request caches. Default:
 `256`.
 
@@ -88,7 +109,8 @@ For every decode batch:
 2. Encode that text with the draft tokenizer.
 3. Reuse a per-request draft KV cache when the newly encoded draft context has
    the cached draft token ids as an exact prefix.
-4. Generate a short greedy draft block with the ordinary HF draft model.
+4. Fork the cached draft KV and generate a short greedy draft block with the
+   ordinary HF draft model.
 5. Decode the draft block to text and retokenize it with the target tokenizer.
 6. Build one linear target-token candidate chain per request.
 7. Verify the candidate chains through SGLang's internal target verifier.

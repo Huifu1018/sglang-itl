@@ -19,6 +19,8 @@ def activate() -> None:
         def is_ngram(self) -> bool:
             # The worker reuses SGLang's NGRAM verify input and target-only
             # verification kernels, but supplies TokenTiming draft candidates.
+            # Returning True also prevents scheduler paths from assuming this
+            # custom worker owns a native SGLang draft KV pool.
             return True
 
         def supports_spec_v2(self) -> bool:

@@ -129,7 +129,7 @@ class HFDraftProposer:
             draft_ids: list[int] = []
             proxy_ids: list[int] = []
             generation_ids = list(state.input_ids)
-            generation_past = state.past_key_values
+            generation_past = self._fork_past_key_values(state.past_key_values)
             logits = state.next_token_logits
             context_len = len(state.input_ids)
 
@@ -301,12 +301,24 @@ class HFDraftProposer:
     def _input_device(self):
         import torch
 
+        if self.config.draft_device_map:
+            try:
+                return next(self.draft_model.parameters()).device
+            except StopIteration:
+                return torch.device("cuda")
         if self.config.draft_device and self.config.draft_device != "auto":
             return torch.device(self.config.draft_device)
         try:
             return next(self.draft_model.parameters()).device
         except StopIteration:
             return torch.device("cuda")
+
+    def _fork_past_key_values(self, past_key_values: object) -> object:
+        if past_key_values is None or not self.config.clone_draft_cache:
+            return past_key_values
+        if hasattr(past_key_values, "to_legacy_cache"):
+            past_key_values = past_key_values.to_legacy_cache()
+        return _clone_nested_tensors(past_key_values)
 
     def _alignment_cost(
         self,
@@ -377,3 +389,17 @@ def _torch_dtype(torch_module: object, dtype_name: str) -> object:
     if not hasattr(torch_module, attr):
         raise ValueError(f"Unsupported TOKEN_ITL_DRAFT_DTYPE: {dtype_name}")
     return getattr(torch_module, attr)
+
+
+def _clone_nested_tensors(value: object) -> object:
+    import torch
+
+    if torch.is_tensor(value):
+        return value.clone()
+    if isinstance(value, tuple):
+        return tuple(_clone_nested_tensors(item) for item in value)
+    if isinstance(value, list):
+        return [_clone_nested_tensors(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clone_nested_tensors(item) for key, item in value.items()}
+    return value

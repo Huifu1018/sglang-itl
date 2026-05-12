@@ -112,6 +112,7 @@ Use this table to pick the correct entry point.
 | Evaluate a target/draft pair | `scripts/tokentiming_pair_bench.py` |
 | Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
 | Serve with SGLang engine-level verification | `--speculative-algorithm TOKEN_ITL` |
+| Check TOKEN_ITL deployment readiness | `scripts/sglang_token_itl_preflight.py` |
 | Generate MiniMax-M2.7-NVFP4 serving commands | `scripts/minimax_m27_nvfp4_deploy.py` |
 | Benchmark an already running OpenAI-compatible server | `scripts/openai_compat_bench.py` |
 | Import the algorithm in Python | `tokentiming.dynamic_token_warping` and `tokentiming.map_top1_draft_probabilities` |
@@ -267,6 +268,14 @@ pip install -e ".[sglang]"
 export SGLANG_PLUGINS=token_itl
 ```
 
+Run preflight on the deployment host before starting the server:
+
+```bash
+python scripts/sglang_token_itl_preflight.py \
+  --target nvidia/MiniMax-M2.7-NVFP4 \
+  --draft Qwen/Qwen2.5-1.5B-Instruct
+```
+
 Start SGLang with the custom algorithm:
 
 ```bash
@@ -274,6 +283,7 @@ export TOKEN_ITL_DRAFT_DEVICE=cuda:0
 export TOKEN_ITL_DRAFT_DTYPE=bfloat16
 export TOKEN_ITL_DTW_WINDOW=8
 export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
+export TOKEN_ITL_CLONE_DRAFT_CACHE=true
 export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
 python -m sglang.launch_server \

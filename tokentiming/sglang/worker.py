@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from time import monotonic
 from typing import Optional
 
 import torch
@@ -19,10 +21,22 @@ from sglang.srt.speculative.ngram_info import NgramVerifyInput
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import generate_token_bitmask
 
+from .candidates import build_linear_candidate_rows
 from .config import TokenITLSGLangConfig
-from .proposer import HFDraftProposer
+from .proposer import DraftProposal, HFDraftProposer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TokenITLWorkerStats:
+    batches: int = 0
+    verify_batches: int = 0
+    target_only_batches: int = 0
+    requests: int = 0
+    proposed_proxy_tokens: int = 0
+    accepted_draft_tokens: int = 0
+    evicted_requests: int = 0
 
 
 class TokenITLWorker:
@@ -50,29 +64,31 @@ class TokenITLWorker:
         self.model_runner = target_worker.model_runner
         self.tp_rank = tp_rank
         self.page_size = server_args.page_size
-        self.draft_token_num = int(server_args.speculative_num_draft_tokens)
+        self.max_draft_token_num = int(server_args.speculative_num_draft_tokens)
         self.device = f"cuda:{gpu_id}" if gpu_id >= 0 else "cuda"
         self.pad_token_id = self._resolve_pad_token_id(target_worker.tokenizer)
 
-        config = TokenITLSGLangConfig.from_env(default_draft_device=self.device)
-        if config.disable_cuda_graph and hasattr(server_args, "disable_cuda_graph"):
+        self.config = TokenITLSGLangConfig.from_env(default_draft_device=self.device)
+        if self.config.disable_cuda_graph and hasattr(server_args, "disable_cuda_graph"):
             server_args.disable_cuda_graph = True
 
         self.proposer = HFDraftProposer(
             draft_model_path=server_args.speculative_draft_model_path,
             target_tokenizer=target_worker.tokenizer,
-            config=config,
+            config=self.config,
             trust_remote_code=bool(server_args.trust_remote_code),
         )
+        self.stats = TokenITLWorkerStats()
+        self._last_metrics_log_time = monotonic()
         logger.info(
-            "Initialized TOKEN_ITL worker: draft=%s, draft_tokens=%s, device=%s",
+            "Initialized TOKEN_ITL worker: draft=%s, max_draft_tokens=%s, device=%s",
             server_args.speculative_draft_model_path,
-            self.draft_token_num,
+            self.max_draft_token_num,
             self.device,
         )
 
     def clear_cache_pool(self):
-        pass
+        self.proposer.clear()
 
     def update_weights_from_tensor(self, recv_req):
         return self.target_worker.update_weights_from_tensor(recv_req)
@@ -91,6 +107,8 @@ class TokenITLWorker:
         return {}
 
     def forward_batch_generation(self, batch: ScheduleBatch) -> GenerationBatchResult:
+        self.stats.batches += 1
+        self.stats.requests += batch.batch_size()
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
             model_worker_batch = batch.get_model_worker_batch()
             batch_result = self.target_worker.forward_batch_generation(model_worker_batch)
@@ -118,6 +136,7 @@ class TokenITLWorker:
         num_correct_drafts_per_req_cpu = None
 
         if model_worker_batch.forward_mode.is_target_verify():
+            self.stats.verify_batches += 1
             if batch.has_grammar:
                 retrieve_next_token_cpu = spec_info.retrieve_next_token.cpu()
                 retrieve_next_sibling_cpu = spec_info.retrieve_next_sibling.cpu()
@@ -160,6 +179,7 @@ class TokenITLWorker:
             num_correct_drafts_per_req_cpu = (
                 verify_input.num_correct_drafts.cpu().tolist()
             )
+            self.stats.accepted_draft_tokens += sum(num_correct_drafts_per_req_cpu)
 
             if get_global_tracing_enabled():
                 for idx, req in enumerate(batch.reqs):
@@ -173,8 +193,11 @@ class TokenITLWorker:
             accept_lens = verify_input.num_accept_tokens
             if batch.return_logprob:
                 add_output_logprobs_for_spec_v1(batch, verify_input, logits_output)
+            self._evict_finished_requests(batch)
+            self._maybe_log_metrics()
             batch.forward_mode = ForwardMode.DECODE
         else:
+            self.stats.target_only_batches += 1
             batch_result = self.target_worker.forward_batch_generation(model_worker_batch)
             logits_output, next_token_ids, can_run_cuda_graph = (
                 batch_result.logits_output,
@@ -193,7 +216,9 @@ class TokenITLWorker:
 
     def _prepare_for_speculative_decoding(self, batch: ScheduleBatch) -> None:
         bs = batch.batch_size()
-        rows = self._build_candidate_rows(batch)
+        candidate_rows = self._build_candidate_rows(batch)
+        rows = candidate_rows.rows
+        draft_token_num = candidate_rows.draft_token_num
         draft_token = torch.tensor(
             [token for row in rows for token in row],
             dtype=torch.int64,
@@ -201,26 +226,26 @@ class TokenITLWorker:
         )
 
         retrieve_index = torch.arange(
-            bs * self.draft_token_num,
+            bs * draft_token_num,
             dtype=torch.int64,
             device=self.device,
-        ).reshape(bs, self.draft_token_num)
+        ).reshape(bs, draft_token_num)
         next_row = torch.arange(
             1,
-            self.draft_token_num + 1,
+            draft_token_num + 1,
             dtype=torch.int64,
             device=self.device,
         )
         next_row[-1] = -1
         retrieve_next_token = next_row.unsqueeze(0).repeat(bs, 1)
         retrieve_next_sibling = torch.full(
-            (bs, self.draft_token_num),
+            (bs, draft_token_num),
             -1,
             dtype=torch.int64,
             device=self.device,
         )
         offsets = torch.arange(
-            self.draft_token_num,
+            draft_token_num,
             dtype=torch.int64,
             device=self.device,
         )
@@ -228,7 +253,7 @@ class TokenITLWorker:
 
         linear_mask = torch.tril(
             torch.ones(
-                (self.draft_token_num, self.draft_token_num),
+                (draft_token_num, draft_token_num),
                 dtype=torch.bool,
                 device=self.device,
             )
@@ -237,7 +262,7 @@ class TokenITLWorker:
         for i in range(bs):
             prefix_len = int(batch.seq_lens_cpu[i].item())
             prefix_mask = torch.ones(
-                (self.draft_token_num, prefix_len),
+                (draft_token_num, prefix_len),
                 dtype=torch.bool,
                 device=self.device,
             )
@@ -253,32 +278,63 @@ class TokenITLWorker:
             retrieve_index,
             retrieve_next_token,
             retrieve_next_sibling,
-            self.draft_token_num,
+            draft_token_num,
         )
         batch.spec_info.prepare_for_verify(batch, self.page_size)
 
-    def _build_candidate_rows(self, batch: ScheduleBatch) -> list[list[int]]:
-        rows: list[list[int]] = []
-        max_proxy_tokens = self.draft_token_num - 1
+    def _build_candidate_rows(self, batch: ScheduleBatch):
+        roots: list[int] = []
+        proxy_rows: list[tuple[int, ...]] = []
+        max_proxy_tokens = self.max_draft_token_num - 1
         for req in batch.reqs:
             root = self._root_token(req)
-            proxies: tuple[int, ...] = ()
+            roots.append(root)
+            proposal = DraftProposal((), (), None, "skipped", 0)
             if getattr(req, "multimodal_inputs", None) is None:
                 try:
                     current_text = self._current_text(req)
                     proposal = self.proposer.propose(
+                        str(req.rid),
                         current_text,
                         max_proxy_tokens=max_proxy_tokens,
                     )
-                    proxies = proposal.proxy_target_token_ids
                 except Exception:
                     logger.exception("TOKEN_ITL proposal failed for request %s", req.rid)
 
-            row = [root] + [int(token_id) for token_id in proxies[:max_proxy_tokens]]
-            while len(row) < self.draft_token_num:
-                row.append(self.pad_token_id)
-            rows.append(row[: self.draft_token_num])
-        return rows
+            proxy_rows.append(proposal.proxy_target_token_ids[:max_proxy_tokens])
+        candidate_rows = build_linear_candidate_rows(
+            roots,
+            proxy_rows,
+            max_draft_token_num=self.max_draft_token_num,
+        )
+        self.stats.proposed_proxy_tokens += candidate_rows.proposed_proxy_tokens
+        return candidate_rows
+
+    def _evict_finished_requests(self, batch: ScheduleBatch) -> None:
+        finished_req_ids = [
+            str(req.rid)
+            for req in batch.reqs
+            if req.finished() or getattr(req, "is_retracted", False)
+        ]
+        if finished_req_ids:
+            self.proposer.evict(finished_req_ids)
+            self.stats.evicted_requests += len(finished_req_ids)
+
+    def _maybe_log_metrics(self) -> None:
+        interval = self.config.metrics_log_interval
+        if interval is None:
+            return
+        now = monotonic()
+        if now - self._last_metrics_log_time < interval:
+            return
+        self._last_metrics_log_time = now
+        proposer_stats = self.proposer.stats.snapshot()
+        logger.info(
+            "TOKEN_ITL metrics: worker=%s proposer=%s cache_size=%s",
+            self.stats,
+            proposer_stats,
+            self.proposer.cache_size(),
+        )
 
     def _current_text(self, req: object) -> str:
         input_ids = list(getattr(req, "origin_input_ids_unpadded", None) or req.origin_input_ids)

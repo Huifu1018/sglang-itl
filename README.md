@@ -273,6 +273,8 @@ Start SGLang with the custom algorithm:
 export TOKEN_ITL_DRAFT_DEVICE=cuda:0
 export TOKEN_ITL_DRAFT_DTYPE=bfloat16
 export TOKEN_ITL_DTW_WINDOW=8
+export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
+export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
 python -m sglang.launch_server \
   --model-path nvidia/MiniMax-M2.7-NVFP4 \
@@ -316,8 +318,9 @@ Current SGLang scope:
 - greedy decoding only (`temperature=0`),
 - text-only requests,
 - no overlap scheduler, target CUDA graph, DP attention, or pipeline parallelism,
-- target verification and KV mutation are inside SGLang; draft proposal is still
-  an HF draft model inside the plugin worker.
+- target verification and KV mutation are inside SGLang,
+- draft proposal uses an ordinary HF draft model with per-request
+  `past_key_values` cache and conservative prefix validation.
 
 Full details: [docs/sglang_token_itl.md](docs/sglang_token_itl.md)
 
@@ -453,18 +456,20 @@ Implemented:
 - heterogeneous tokenizer retokenization,
 - DTW alignment,
 - top-1 draft probability mapping,
-- SGLang `TOKEN_ITL` plugin using SGLang's internal target verifier,
+- SGLang `TOKEN_ITL` plugin using SGLang's internal target verifier and
+  per-request draft KV cache,
 - deployment and benchmark helpers.
 
 Not implemented as a production sampler:
 
 - full stochastic lossless residual sampling inside vLLM/SGLang,
-- optimized draft-side KV-cache integration inside SGLang,
+- native SGLang `ModelRunner` draft execution for heterogeneous-tokenizer draft
+  models,
 - target-specific speculator training.
 
-The next production step is to keep per-request draft KV state inside the
-SGLang worker instead of regenerating the draft context through a HF model each
-verification block.
+The next production step is to replace the HF draft runner with a native SGLang
+draft worker while preserving the heterogeneous-tokenizer retokenization and
+verification contract.
 
 ## License
 

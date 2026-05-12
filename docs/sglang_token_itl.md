@@ -23,6 +23,8 @@ export SGLANG_PLUGINS=token_itl
 export TOKEN_ITL_DRAFT_DEVICE=cuda:0
 export TOKEN_ITL_DRAFT_DTYPE=bfloat16
 export TOKEN_ITL_DTW_WINDOW=8
+export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
+export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
 python -m sglang.launch_server \
   --model-path nvidia/MiniMax-M2.7-NVFP4 \
@@ -65,14 +67,49 @@ the draft model is not moved with `.to(device)`.
 `TOKEN_ITL_MAX_DRAFT_TOKENS`: upper bound for draft-token generation while
 trying to collect enough target proxy tokens.
 
+`TOKEN_ITL_MAX_CONTEXT_TOKENS`: optional draft-side context window. Leave unset
+for full draft context. Set it when the ordinary draft model has a shorter
+context window than the target.
+
+`TOKEN_ITL_ENABLE_DRAFT_CACHE`: keep per-request HF `past_key_values` caches.
+Default: `true`.
+
+`TOKEN_ITL_MAX_CACHED_REQUESTS`: LRU cap for draft request caches. Default:
+`256`.
+
+`TOKEN_ITL_METRICS_LOG_INTERVAL`: seconds between worker metric log lines.
+Default: `60`. Set it to `0` to disable periodic metric logging.
+
+## Execution Path
+
+For every decode batch:
+
+1. Reconstruct each request's current target text from SGLang request state.
+2. Encode that text with the draft tokenizer.
+3. Reuse a per-request draft KV cache when the newly encoded draft context has
+   the cached draft token ids as an exact prefix.
+4. Generate a short greedy draft block with the ordinary HF draft model.
+5. Decode the draft block to text and retokenize it with the target tokenizer.
+6. Build one linear target-token candidate chain per request.
+7. Verify the candidate chains through SGLang's internal target verifier.
+8. Evict draft cache state for finished or retracted requests.
+
+The worker does not pad missing candidates into real target tokens. If any
+request in a batch cannot produce enough valid proxy tokens, the whole batch
+verify width shrinks to the shortest real candidate chain. If the shortest
+chain has no draft candidate, SGLang performs a target-only decode step for that
+batch.
+
 ## Current Scope
 
-The first SGLang path is correctness-first:
+This SGLang path is engine-integrated but intentionally conservative:
 
 - Target verification, request mutation, and KV cache handling use SGLang's
   internal spec-v1 verification path.
 - Draft candidates come from an ordinary HF `AutoModelForCausalLM` and are
   retokenized into target-vocabulary proxy tokens.
+- The HF draft side keeps per-request `past_key_values` caches and falls back to
+  rebuild when tokenizer boundary effects invalidate prefix reuse.
 - Greedy decoding is supported. Sampling requires carrying proposal
   probabilities through SGLang's verifier and is not enabled yet.
 - Overlap schedule, target CUDA graph, DP attention, pipeline parallelism, and

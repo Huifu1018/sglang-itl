@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -9,16 +11,61 @@ from tokentiming.alignment import dynamic_token_warping
 
 from .config import TokenITLSGLangConfig
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class DraftProposal:
     draft_token_ids: tuple[int, ...]
     proxy_target_token_ids: tuple[int, ...]
     alignment_cost: float | None
+    cache_event: str
+    draft_context_tokens: int
+
+
+@dataclass
+class DraftRequestState:
+    rid: str
+    text: str
+    input_ids: tuple[int, ...]
+    past_key_values: object
+    next_token_logits: object
+
+
+@dataclass
+class DraftProposerStats:
+    proposals: int = 0
+    proposed_proxy_tokens: int = 0
+    proposed_draft_tokens: int = 0
+    cache_hits: int = 0
+    cache_extensions: int = 0
+    cache_rebuilds: int = 0
+    cache_evictions: int = 0
+    empty_proposals: int = 0
+    failed_proposals: int = 0
+
+    def snapshot(self) -> dict[str, int]:
+        return {
+            "proposals": self.proposals,
+            "proposed_proxy_tokens": self.proposed_proxy_tokens,
+            "proposed_draft_tokens": self.proposed_draft_tokens,
+            "cache_hits": self.cache_hits,
+            "cache_extensions": self.cache_extensions,
+            "cache_rebuilds": self.cache_rebuilds,
+            "cache_evictions": self.cache_evictions,
+            "empty_proposals": self.empty_proposals,
+            "failed_proposals": self.failed_proposals,
+        }
 
 
 class HFDraftProposer:
-    """Generate draft text and retokenize it into target-vocabulary proxies."""
+    """Generate draft text and retokenize it into target-vocabulary proxies.
+
+    The proposer keeps an HF ``past_key_values`` cache per SGLang request id.
+    Cache reuse is conservative: it only extends a cached draft context when the
+    newly encoded draft-token context has the cached token ids as an exact
+    prefix. If tokenizer boundary effects make that unsafe, it rebuilds.
+    """
 
     def __init__(
         self,
@@ -54,70 +101,202 @@ class HFDraftProposer:
             self.draft_model.to(config.draft_device)
         self.draft_model.eval()
 
-    def propose(self, current_text: str, *, max_proxy_tokens: int) -> DraftProposal:
+        self._states: OrderedDict[str, DraftRequestState] = OrderedDict()
+        self.stats = DraftProposerStats()
+
+    def propose(
+        self,
+        rid: str,
+        current_text: str,
+        *,
+        max_proxy_tokens: int,
+    ) -> DraftProposal:
         """Return target-tokenizer proxy ids for a short draft continuation."""
 
         import torch
 
+        self.stats.proposals += 1
         if max_proxy_tokens <= 0:
-            return DraftProposal((), (), None)
+            self.stats.empty_proposals += 1
+            return DraftProposal((), (), None, "disabled", 0)
 
-        encoded = self.draft_tokenizer(
-            current_text,
-            return_tensors="pt",
-            add_special_tokens=self.config.add_special_tokens,
-        )
-        input_ids = encoded["input_ids"].to(self._input_device())
-        attention_mask = torch.ones_like(input_ids)
+        try:
+            state, cache_event = self._ensure_state(rid, current_text)
+            max_draft_tokens = self.config.max_draft_tokens
+            if max_draft_tokens is None:
+                max_draft_tokens = max(max_proxy_tokens * 4, max_proxy_tokens + 4)
 
-        max_draft_tokens = self.config.max_draft_tokens
-        if max_draft_tokens is None:
-            max_draft_tokens = max(max_proxy_tokens * 4, max_proxy_tokens + 4)
+            draft_ids: list[int] = []
+            proxy_ids: list[int] = []
+            generation_ids = list(state.input_ids)
+            generation_past = state.past_key_values
+            logits = state.next_token_logits
+            context_len = len(state.input_ids)
 
-        draft_ids: list[int] = []
-        proxy_ids: list[int] = []
-        past_key_values = None
-        next_input = input_ids
-        context = input_ids
+            with torch.inference_mode():
+                for _ in range(max_draft_tokens):
+                    next_token = int(torch.argmax(logits, dim=-1)[0])
+                    draft_ids.append(next_token)
 
-        with torch.inference_mode():
-            for _ in range(max_draft_tokens):
+                    draft_text = self._decode(self.draft_tokenizer, draft_ids)
+                    proxy_ids = self._encode(self.target_tokenizer, draft_text)
+                    if len(proxy_ids) >= max_proxy_tokens:
+                        break
+
+                    generation_ids.append(next_token)
+                    context_len += 1
+                    if generation_past is None:
+                        next_tensor = torch.tensor(
+                            [generation_ids],
+                            dtype=torch.long,
+                            device=self._input_device(),
+                        )
+                        attention_mask = torch.ones_like(next_tensor)
+                    else:
+                        next_tensor = torch.tensor(
+                            [[next_token]],
+                            dtype=torch.long,
+                            device=self._input_device(),
+                        )
+                        attention_mask = torch.ones(
+                            (1, context_len),
+                            dtype=torch.long,
+                            device=next_tensor.device,
+                        )
+                    outputs = self.draft_model(
+                        input_ids=next_tensor,
+                        attention_mask=attention_mask,
+                        past_key_values=generation_past,
+                        use_cache=True,
+                    )
+                    generation_past = getattr(outputs, "past_key_values", None)
+                    logits = outputs.logits[:, -1, :]
+
+                    eos_token_id = getattr(self.draft_tokenizer, "eos_token_id", None)
+                    if eos_token_id is not None and next_token == int(eos_token_id):
+                        break
+
+            proxy_ids = proxy_ids[:max_proxy_tokens]
+            if not proxy_ids:
+                self.stats.empty_proposals += 1
+            self.stats.proposed_proxy_tokens += len(proxy_ids)
+            self.stats.proposed_draft_tokens += len(draft_ids)
+            alignment_cost = self._alignment_cost(draft_ids, proxy_ids)
+            return DraftProposal(
+                draft_token_ids=tuple(draft_ids),
+                proxy_target_token_ids=tuple(int(token_id) for token_id in proxy_ids),
+                alignment_cost=alignment_cost,
+                cache_event=cache_event,
+                draft_context_tokens=len(state.input_ids),
+            )
+        except Exception:
+            self.stats.failed_proposals += 1
+            raise
+
+    def evict(self, rids: Sequence[str]) -> None:
+        for rid in rids:
+            if self._states.pop(str(rid), None) is not None:
+                self.stats.cache_evictions += 1
+
+    def clear(self) -> None:
+        evicted = len(self._states)
+        self._states.clear()
+        self.stats.cache_evictions += evicted
+
+    def cache_size(self) -> int:
+        return len(self._states)
+
+    def _ensure_state(self, rid: str, current_text: str) -> tuple[DraftRequestState, str]:
+        import torch
+
+        rid = str(rid)
+        context_ids = tuple(self._context_ids(current_text))
+        if not context_ids:
+            raise ValueError("draft context must contain at least one token.")
+
+        cached = self._states.get(rid) if self.config.enable_draft_cache else None
+        if cached is not None and cached.input_ids == context_ids:
+            self._states.move_to_end(rid)
+            self.stats.cache_hits += 1
+            return cached, "hit"
+
+        if (
+            cached is not None
+            and cached.past_key_values is not None
+            and len(context_ids) > len(cached.input_ids)
+            and context_ids[: len(cached.input_ids)] == cached.input_ids
+        ):
+            suffix = context_ids[len(cached.input_ids) :]
+            suffix_tensor = torch.tensor(
+                [list(suffix)],
+                dtype=torch.long,
+                device=self._input_device(),
+            )
+            attention_mask = torch.ones(
+                (1, len(context_ids)),
+                dtype=torch.long,
+                device=suffix_tensor.device,
+            )
+            with torch.inference_mode():
                 outputs = self.draft_model(
-                    input_ids=next_input,
+                    input_ids=suffix_tensor,
                     attention_mask=attention_mask,
-                    past_key_values=past_key_values,
+                    past_key_values=cached.past_key_values,
                     use_cache=True,
                 )
-                logits = outputs.logits[:, -1, :]
-                next_token = int(torch.argmax(logits, dim=-1)[0])
-                draft_ids.append(next_token)
+            state = DraftRequestState(
+                rid=rid,
+                text=current_text,
+                input_ids=context_ids,
+                past_key_values=getattr(outputs, "past_key_values", None),
+                next_token_logits=outputs.logits[:, -1, :],
+            )
+            self._store_state(state)
+            self.stats.cache_extensions += 1
+            return state, "extend"
 
-                draft_text = self._decode(self.draft_tokenizer, draft_ids)
-                proxy_ids = self._encode(self.target_tokenizer, draft_text)
-                if len(proxy_ids) >= max_proxy_tokens:
-                    break
-
-                next_tensor = torch.tensor(
-                    [[next_token]],
-                    dtype=context.dtype,
-                    device=context.device,
-                )
-                context = torch.cat([context, next_tensor], dim=1)
-                attention_mask = torch.ones_like(context)
-                past_key_values = getattr(outputs, "past_key_values", None)
-                next_input = next_tensor if past_key_values is not None else context
-
-                eos_token_id = getattr(self.draft_tokenizer, "eos_token_id", None)
-                if eos_token_id is not None and next_token == int(eos_token_id):
-                    break
-
-        proxy_ids = proxy_ids[:max_proxy_tokens]
-        alignment_cost = self._alignment_cost(draft_ids, proxy_ids)
-        return DraftProposal(
-            draft_token_ids=tuple(draft_ids),
-            proxy_target_token_ids=tuple(int(token_id) for token_id in proxy_ids),
-            alignment_cost=alignment_cost,
+        input_tensor = torch.tensor(
+            [list(context_ids)],
+            dtype=torch.long,
+            device=self._input_device(),
         )
+        attention_mask = torch.ones_like(input_tensor)
+        with torch.inference_mode():
+            outputs = self.draft_model(
+                input_ids=input_tensor,
+                attention_mask=attention_mask,
+                use_cache=True,
+            )
+        state = DraftRequestState(
+            rid=rid,
+            text=current_text,
+            input_ids=context_ids,
+            past_key_values=getattr(outputs, "past_key_values", None),
+            next_token_logits=outputs.logits[:, -1, :],
+        )
+        self._store_state(state)
+        self.stats.cache_rebuilds += 1
+        return state, "rebuild"
+
+    def _store_state(self, state: DraftRequestState) -> None:
+        if not self.config.enable_draft_cache:
+            return
+        self._states[state.rid] = state
+        self._states.move_to_end(state.rid)
+        while len(self._states) > self.config.max_cached_requests:
+            self._states.popitem(last=False)
+            self.stats.cache_evictions += 1
+
+    def _context_ids(self, text: str) -> list[int]:
+        token_ids = self._encode(
+            self.draft_tokenizer,
+            text,
+            add_special_tokens=self.config.add_special_tokens,
+        )
+        max_context_tokens = self.config.max_context_tokens
+        if max_context_tokens is not None and len(token_ids) > max_context_tokens:
+            token_ids = token_ids[-max_context_tokens:]
+        return token_ids
 
     def _input_device(self):
         import torch
@@ -137,8 +316,14 @@ class HFDraftProposer:
         if not draft_ids or not proxy_ids:
             return None
         try:
-            draft_strings = tuple(self._decode(self.draft_tokenizer, [token_id]) for token_id in draft_ids)
-            proxy_strings = tuple(self._decode(self.target_tokenizer, [token_id]) for token_id in proxy_ids)
+            draft_strings = tuple(
+                self._decode(self.draft_tokenizer, [token_id])
+                for token_id in draft_ids
+            )
+            proxy_strings = tuple(
+                self._decode(self.target_tokenizer, [token_id])
+                for token_id in proxy_ids
+            )
             alignment = dynamic_token_warping(
                 draft_strings,
                 proxy_strings,
@@ -149,11 +334,16 @@ class HFDraftProposer:
             return None
 
     @staticmethod
-    def _encode(tokenizer: object, text: str) -> list[int]:
+    def _encode(
+        tokenizer: object,
+        text: str,
+        *,
+        add_special_tokens: bool = False,
+    ) -> list[int]:
         try:
-            return list(tokenizer.encode(text, add_special_tokens=False))
+            return list(tokenizer.encode(text, add_special_tokens=add_special_tokens))
         except TypeError:
-            encoded = tokenizer(text, add_special_tokens=False)
+            encoded = tokenizer(text, add_special_tokens=add_special_tokens)
             input_ids = encoded["input_ids"] if isinstance(encoded, dict) else encoded.input_ids
             if input_ids and isinstance(input_ids[0], list):
                 input_ids = input_ids[0]

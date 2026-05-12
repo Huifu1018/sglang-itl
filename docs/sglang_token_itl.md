@@ -7,7 +7,15 @@ model tokenizer.
 ## Install
 
 ```bash
-pip install -e ".[sglang]"
+uv pip install "sglang-itl[sglang]"
+# or
+pip install "sglang-itl[sglang]"
+```
+
+Before the first PyPI release, install from GitHub:
+
+```bash
+uv pip install "sglang-itl[sglang] @ git+https://github.com/Huifu1018/sglang-itl.git"
 ```
 
 SGLang discovers the plugin through the `sglang.srt.plugins` entry point. To
@@ -24,7 +32,7 @@ plugin entry point, `TOKEN_ITL` registry, CUDA availability, and optional
 target/draft model configs without loading model weights.
 
 ```bash
-python scripts/sglang_token_itl_preflight.py \
+sglang-itl-preflight \
   --target nvidia/MiniMax-M2.7-NVFP4 \
   --draft Qwen/Qwen2.5-1.5B-Instruct
 ```

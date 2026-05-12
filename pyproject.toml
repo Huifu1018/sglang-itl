@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,11 +8,17 @@ version = "0.1.0"
 description = "Heterogeneous-vocabulary speculative decoding toolkit with TokenTiming-style alignment"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   {name = "Huifu1018"}
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Huifu1018/sglang-itl"
+Repository = "https://github.com/Huifu1018/sglang-itl"
+Issues = "https://github.com/Huifu1018/sglang-itl/issues"
 
 [project.optional-dependencies]
 hf = [
@@ -34,5 +40,11 @@ sglang = [
 [project.entry-points."sglang.srt.plugins"]
 token_itl = "tokentiming.sglang.plugin:activate"
 
-[tool.setuptools]
-packages = ["tokentiming", "tokentiming.sglang"]
+[project.scripts]
+sglang-itl-bench = "tokentiming.cli.openai_compat_bench:main"
+sglang-itl-minimax-m27 = "tokentiming.cli.minimax_m27_nvfp4_deploy:main"
+sglang-itl-pair-bench = "tokentiming.cli.tokentiming_pair_bench:main"
+sglang-itl-preflight = "tokentiming.cli.sglang_token_itl_preflight:main"
+
+[tool.setuptools.packages.find]
+include = ["tokentiming*"]

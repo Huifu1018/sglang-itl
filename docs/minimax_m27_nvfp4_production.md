@@ -18,7 +18,7 @@ EAGLE/P-EAGLE speculator has a much better chance of giving stable acceptance.
 ## Generate the vLLM Command
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode peagle \
   --target nvidia/MiniMax-M2.7-NVFP4 \
@@ -47,7 +47,7 @@ Add `--run` if you want the helper to execute the command directly.
 If `phatv9/p-eagle-minimax-m2.7` fails to load or gives poor acceptance, try:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode peagle \
   --draft nwzjk/p-eagle-minimax-m2.7 \
@@ -64,7 +64,7 @@ SGLang is a strong serving option for NVFP4, especially on Blackwell hardware.
 The helper can generate a SGLang EAGLE3 command:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine sglang \
   --mode eagle3 \
   --target nvidia/MiniMax-M2.7-NVFP4 \
@@ -103,7 +103,7 @@ Run the same benchmark against baseline and speculative servers.
 Baseline server:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode baseline \
   --tp 8 \
@@ -114,7 +114,7 @@ python scripts/minimax_m27_nvfp4_deploy.py \
 Speculative server:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode peagle \
   --tp 8 \
@@ -125,7 +125,7 @@ python scripts/minimax_m27_nvfp4_deploy.py \
 Benchmark:
 
 ```bash
-python scripts/openai_compat_bench.py \
+sglang-itl-bench \
   --base-url http://127.0.0.1:8000 \
   --model nvidia/MiniMax-M2.7-NVFP4 \
   --requests 64 \
@@ -133,7 +133,7 @@ python scripts/openai_compat_bench.py \
   --max-tokens 512 \
   --temperature 0
 
-python scripts/openai_compat_bench.py \
+sglang-itl-bench \
   --base-url http://127.0.0.1:8001 \
   --model nvidia/MiniMax-M2.7-NVFP4 \
   --requests 64 \

@@ -92,7 +92,7 @@ server must inspect logits for proposed proxy token positions.
 Use the pair benchmark before any production integration:
 
 ```bash
-python scripts/tokentiming_pair_bench.py \
+sglang-itl-pair-bench \
   --target nvidia/MiniMax-M2.7-NVFP4 \
   --draft Qwen/Qwen2.5-1.5B-Instruct \
   --prompts-file prompts.txt \

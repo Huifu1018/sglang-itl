@@ -75,30 +75,50 @@ configs/
 
 ## Install
 
-Core tests do not require PyTorch or Transformers.
+For the lightweight core package:
+
+```bash
+uv pip install sglang-itl
+# or
+pip install sglang-itl
+```
+
+For SGLang engine integration, install the package with the `sglang` extra:
+
+```bash
+uv pip install "sglang-itl[sglang]"
+# or
+pip install "sglang-itl[sglang]"
+```
+
+For HF-only pair evaluation without SGLang:
+
+```bash
+uv pip install "sglang-itl[hf]"
+# or
+pip install "sglang-itl[hf]"
+```
+
+Until the first PyPI release is published, install directly from GitHub:
+
+```bash
+uv pip install "sglang-itl[sglang] @ git+https://github.com/Huifu1018/sglang-itl.git"
+# or
+pip install "sglang-itl[sglang] @ git+https://github.com/Huifu1018/sglang-itl.git"
+```
+
+For local development:
 
 ```bash
 git clone https://github.com/Huifu1018/sglang-itl.git
 cd sglang-itl
 python -m venv .venv
 source .venv/bin/activate
+uv pip install -e ".[sglang]"
 python -m unittest discover -s tests -p 'test_tokentiming*.py'
 ```
 
-For real model runs:
-
-```bash
-pip install -e ".[hf]"
-```
-
-This installs the optional Hugging Face runtime dependencies declared in
-`pyproject.toml`.
-
-For SGLang engine integration:
-
-```bash
-pip install -e ".[sglang]"
-```
+Core tests do not require PyTorch, Transformers, or SGLang.
 
 ## Usage Guide
 
@@ -109,18 +129,17 @@ Use this table to pick the correct entry point.
 | Goal | Command or Module |
 | --- | --- |
 | Check that the repo works | `python -m unittest discover -s tests -p 'test_tokentiming*.py'` |
-| Evaluate a target/draft pair | `scripts/tokentiming_pair_bench.py` |
+| Evaluate a target/draft pair | `sglang-itl-pair-bench` |
 | Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
 | Serve with SGLang engine-level verification | `--speculative-algorithm TOKEN_ITL` |
-| Check TOKEN_ITL deployment readiness | `scripts/sglang_token_itl_preflight.py` |
-| Generate MiniMax-M2.7-NVFP4 serving commands | `scripts/minimax_m27_nvfp4_deploy.py` |
-| Benchmark an already running OpenAI-compatible server | `scripts/openai_compat_bench.py` |
+| Check TOKEN_ITL deployment readiness | `sglang-itl-preflight` |
+| Generate MiniMax-M2.7-NVFP4 serving commands | `sglang-itl-minimax-m27` |
+| Benchmark an already running OpenAI-compatible server | `sglang-itl-bench` |
 | Import the algorithm in Python | `tokentiming.dynamic_token_warping` and `tokentiming.map_top1_draft_probabilities` |
 
 If your draft model is a normal off-the-shelf LLM with a different tokenizer,
-start with `scripts/tokentiming_pair_bench.py`. If you already have a running
-vLLM/SGLang server, use `scripts/openai_compat_bench.py` to compare endpoint
-throughput.
+start with `sglang-itl-pair-bench`. If you already have a running vLLM/SGLang
+server, use `sglang-itl-bench` to compare endpoint throughput.
 
 ### 2. Prepare Prompts
 
@@ -143,7 +162,7 @@ Run the pair benchmark. This uses the Hugging Face reference verifier, so it is
 for correctness and pair selection, not final serving throughput.
 
 ```bash
-python scripts/tokentiming_pair_bench.py \
+sglang-itl-pair-bench \
   --target nvidia/MiniMax-M2.7-NVFP4 \
   --draft Qwen/Qwen2.5-1.5B-Instruct \
   --prompts-file prompts.txt \
@@ -224,7 +243,7 @@ production serving should move the same logic into vLLM/SGLang internals.
 For MiniMax-M2.7-NVFP4 serving profiles:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode baseline \
   --tp 8 \
@@ -234,7 +253,7 @@ python scripts/minimax_m27_nvfp4_deploy.py \
 For a P-EAGLE/EAGLE profile:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode peagle \
   --draft phatv9/p-eagle-minimax-m2.7 \
@@ -245,7 +264,7 @@ python scripts/minimax_m27_nvfp4_deploy.py \
 For SGLang:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine sglang \
   --mode eagle3 \
   --draft phatv9/p-eagle-minimax-m2.7 \
@@ -261,17 +280,17 @@ Use `--run` only when you want the helper to execute the printed command.
 to propose text, retokenizes that text with the target tokenizer, then verifies
 the target proxy tokens through SGLang's internal spec-v1 target verifier.
 
-Install this repo in the same environment as SGLang:
+Install this package in the same environment as SGLang:
 
 ```bash
-pip install -e ".[sglang]"
+uv pip install "sglang-itl[sglang]"
 export SGLANG_PLUGINS=token_itl
 ```
 
 Run preflight on the deployment host before starting the server:
 
 ```bash
-python scripts/sglang_token_itl_preflight.py \
+sglang-itl-preflight \
   --target nvidia/MiniMax-M2.7-NVFP4 \
   --draft Qwen/Qwen2.5-1.5B-Instruct
 ```
@@ -315,7 +334,7 @@ curl http://localhost:30000/v1/chat/completions \
 The deployment helper can print the same shape of command:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine sglang \
   --mode token_itl \
   --draft Qwen/Qwen2.5-1.5B-Instruct \
@@ -339,7 +358,7 @@ Full details: [docs/sglang_token_itl.md](docs/sglang_token_itl.md)
 After starting a vLLM/SGLang OpenAI-compatible endpoint, benchmark it with:
 
 ```bash
-python scripts/openai_compat_bench.py \
+sglang-itl-bench \
   --base-url http://127.0.0.1:8000 \
   --model nvidia/MiniMax-M2.7-NVFP4 \
   --prompts-file prompts.txt \
@@ -432,7 +451,7 @@ The repository also contains command builders for baseline/P-EAGLE/NGRAM
 serving profiles:
 
 ```bash
-python scripts/minimax_m27_nvfp4_deploy.py \
+sglang-itl-minimax-m27 \
   --engine vllm \
   --mode peagle \
   --tp 8 \

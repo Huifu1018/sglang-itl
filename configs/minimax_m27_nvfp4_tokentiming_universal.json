@@ -1,0 +1,30 @@
+{
+  "scenario": "heterogeneous_vocab_untrained_draft",
+  "target_model": "nvidia/MiniMax-M2.7-NVFP4",
+  "primary_algorithm": "TokenTiming",
+  "baseline_algorithms": ["SLEM", "TLI"],
+  "draft_requirements": {
+    "type": "ordinary AutoModelForCausalLM",
+    "training": "off-the-shelf, no target-specific training",
+    "tokenizer": "may differ from target tokenizer",
+    "selection_rules": [
+      "much cheaper than the target model",
+      "strong in the target serving domain",
+      "fast prefill/decode on available hardware",
+      "high measured proxy-token acceptance rate"
+    ]
+  },
+  "recommended_start": {
+    "num_draft_tokens": 4,
+    "dtw_window": 8,
+    "temperature": 0.0,
+    "max_new_tokens_for_pair_bench": 128,
+    "minimum_acceptance_rate_to_keep": 0.45,
+    "minimum_tokens_per_target_forward_to_keep": 1.25
+  },
+  "integration": {
+    "prototype": "tokentiming.hf_decoder.TokenTimingGreedyDecoder",
+    "production": "move DTW retokenization and target block verification into vLLM/SGLang worker",
+    "not_sufficient": "OpenAI-compatible HTTP API alone, because verifier needs logits over proposed proxy blocks"
+  }
+}

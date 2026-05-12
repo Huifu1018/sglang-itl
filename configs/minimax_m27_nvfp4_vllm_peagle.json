@@ -1,0 +1,38 @@
+{
+  "engine": "vllm",
+  "mode": "peagle",
+  "target_model": "nvidia/MiniMax-M2.7-NVFP4",
+  "draft_model": "phatv9/p-eagle-minimax-m2.7",
+  "speculative_config": {
+    "method": "eagle3",
+    "model": "phatv9/p-eagle-minimax-m2.7",
+    "num_speculative_tokens": 5,
+    "parallel_drafting": true
+  },
+  "recommended_start": {
+    "tensor_parallel_size": 8,
+    "max_model_len": 32768,
+    "temperature": 0.0,
+    "benchmark_concurrency": [1, 2, 4, 8, 16]
+  },
+  "fallbacks": [
+    {
+      "engine": "vllm",
+      "mode": "ngram",
+      "speculative_config": {
+        "method": "ngram",
+        "num_speculative_tokens": 5
+      }
+    },
+    {
+      "engine": "sglang",
+      "mode": "eagle3",
+      "draft_model": "phatv9/p-eagle-minimax-m2.7",
+      "quantization": "modelopt_fp4"
+    },
+    {
+      "engine": "vllm",
+      "mode": "baseline"
+    }
+  ]
+}

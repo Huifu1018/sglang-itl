@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "token-itl"
+version = "0.1.0"
+description = "Heterogeneous-vocabulary speculative decoding toolkit with TokenTiming-style alignment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Huifu1018"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+hf = [
+  "torch",
+  "transformers>=4.40",
+  "accelerate",
+  "sentencepiece>=0.2",
+  "safetensors>=0.4"
+]
+
+[tool.setuptools]
+packages = ["tokentiming"]

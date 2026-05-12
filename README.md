@@ -77,6 +77,8 @@ Core tests do not require PyTorch or Transformers.
 ```bash
 git clone https://github.com/Huifu1018/Token-ITL.git
 cd Token-ITL
+python -m venv .venv
+source .venv/bin/activate
 python -m unittest discover -s tests -p 'test_tokentiming*.py'
 ```
 
@@ -89,37 +91,184 @@ pip install -e ".[hf]"
 This installs the optional Hugging Face runtime dependencies declared in
 `pyproject.toml`.
 
-## Quick Start: Heterogeneous Draft Pair
+## Usage Guide
 
-Use `tokentiming_pair_bench.py` to evaluate whether an ordinary draft model is
-useful for a target model.
+### 1. Decide Which Path You Need
+
+Use this table to pick the correct entry point.
+
+| Goal | Command or Module |
+| --- | --- |
+| Check that the repo works | `python -m unittest discover -s tests -p 'test_tokentiming*.py'` |
+| Evaluate a target/draft pair | `scripts/tokentiming_pair_bench.py` |
+| Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
+| Generate MiniMax-M2.7-NVFP4 serving commands | `scripts/minimax_m27_nvfp4_deploy.py` |
+| Benchmark an already running OpenAI-compatible server | `scripts/openai_compat_bench.py` |
+| Import the algorithm in Python | `tokentiming.dynamic_token_warping` and `tokentiming.map_top1_draft_probabilities` |
+
+If your draft model is a normal off-the-shelf LLM with a different tokenizer,
+start with `scripts/tokentiming_pair_bench.py`. If you already have a running
+vLLM/SGLang server, use `scripts/openai_compat_bench.py` to compare endpoint
+throughput.
+
+### 2. Prepare Prompts
+
+Create a plain text prompt file. Each non-empty line is one benchmark request.
+
+```bash
+cat > prompts.txt <<'EOF'
+用中文解释 speculative decoding 的核心思想，限制在 200 字以内。
+Write a concise Python function for binary search.
+Compare vLLM and SGLang for serving large MoE models.
+EOF
+```
+
+Use prompts that match your real traffic. Acceptance rate can change a lot
+between chat, code, Chinese, English, and tool-use workloads.
+
+### 3. Benchmark a Heterogeneous Target/Draft Pair
+
+Run the pair benchmark. This uses the Hugging Face reference verifier, so it is
+for correctness and pair selection, not final serving throughput.
 
 ```bash
 python scripts/tokentiming_pair_bench.py \
   --target nvidia/MiniMax-M2.7-NVFP4 \
   --draft Qwen/Qwen2.5-1.5B-Instruct \
+  --prompts-file prompts.txt \
   --max-new-tokens 128 \
   --num-draft-tokens 4 \
-  --dtw-window 8
+  --dtw-window 8 \
+  --device-map auto
 ```
 
-Key metrics:
+Important arguments:
 
-- `acceptance_rate`: fraction of proxy target tokens accepted.
-- `tokens_per_target_forward`: generated tokens divided by target forwards.
-- `target_forwards`: number of verifier forwards.
-- `draft_forwards`: number of draft forwards.
-- `tokens_per_second`: wall-clock throughput for the reference implementation.
+- `--target`: verifier model. This is the model whose output must be preserved.
+- `--draft`: ordinary draft model. It can use a different tokenizer.
+- `--prompts-file`: benchmark prompts, one per line.
+- `--max-new-tokens`: generated tokens per prompt.
+- `--num-draft-tokens`: draft block size. Start with `4`; try `2`, `4`, `6`, `8`.
+- `--dtw-window`: DTW alignment window. Start with `8`; increase if token counts differ heavily.
+- `--device-map`: passed to Hugging Face `from_pretrained`.
 
-As a starting rule, keep a draft pair only if it reaches roughly:
+Example output shape:
+
+```json
+{
+  "prompts": 3,
+  "generated_tokens": 384,
+  "draft_forwards": 512,
+  "target_forwards": 210,
+  "proposed_proxy_tokens": 620,
+  "accepted_proxy_tokens": 330,
+  "elapsed_seconds": 42.3,
+  "acceptance_rate": 0.5323,
+  "tokens_per_target_forward": 1.8286,
+  "tokens_per_second": 9.078
+}
+```
+
+How to read it:
+
+- Keep the pair if `acceptance_rate` is high enough and `tokens_per_target_forward` is above target-only decoding.
+- Reject the pair if `tokens_per_target_forward <= 1.0`; it is not reducing verifier work.
+- Compare several draft models on the same prompt file before choosing one.
+- A larger `num_draft_tokens` is not automatically better; it can lower acceptance and waste draft work.
+
+Practical first thresholds:
 
 ```text
 acceptance_rate >= 0.45
 tokens_per_target_forward >= 1.25
 ```
 
-These thresholds are workload-dependent, but they prevent spending engineering
-time on pairs that are slower than target-only decoding.
+### 4. Run One Prompt With the HF Reference Verifier
+
+Use this when you want to inspect generated text and trace behavior rather than
+run a benchmark.
+
+```bash
+python examples/tokentiming_hf_demo.py \
+  --target nvidia/MiniMax-M2.7-NVFP4 \
+  --draft Qwen/Qwen2.5-1.5B-Instruct \
+  --prompt "用中文解释 TokenTiming 如何处理异构 tokenizer。" \
+  --max-new-tokens 128 \
+  --num-draft-tokens 4
+```
+
+The script prints the generated text and summary stats:
+
+- `generated_tokens`
+- `target_forwards`
+- `draft_forwards`
+- `acceptance_rate`
+- `tokens_per_target_forward`
+
+The HF verifier is intentionally simple. It proves the algorithmic path, but
+production serving should move the same logic into vLLM/SGLang internals.
+
+### 5. Generate Serving Commands
+
+For MiniMax-M2.7-NVFP4 serving profiles:
+
+```bash
+python scripts/minimax_m27_nvfp4_deploy.py \
+  --engine vllm \
+  --mode baseline \
+  --tp 8 \
+  --port 8000
+```
+
+For a P-EAGLE/EAGLE profile:
+
+```bash
+python scripts/minimax_m27_nvfp4_deploy.py \
+  --engine vllm \
+  --mode peagle \
+  --draft phatv9/p-eagle-minimax-m2.7 \
+  --tp 8 \
+  --port 8001
+```
+
+For SGLang:
+
+```bash
+python scripts/minimax_m27_nvfp4_deploy.py \
+  --engine sglang \
+  --mode eagle3 \
+  --draft phatv9/p-eagle-minimax-m2.7 \
+  --tp 8 \
+  --port 8001
+```
+
+Use `--run` only when you want the helper to execute the printed command.
+
+### 6. Benchmark a Running Server
+
+After starting a vLLM/SGLang OpenAI-compatible endpoint, benchmark it with:
+
+```bash
+python scripts/openai_compat_bench.py \
+  --base-url http://127.0.0.1:8000 \
+  --model nvidia/MiniMax-M2.7-NVFP4 \
+  --prompts-file prompts.txt \
+  --requests 64 \
+  --concurrency 4 \
+  --max-tokens 512 \
+  --temperature 0
+```
+
+Compare baseline and speculative servers using:
+
+- `output_tokens_per_s`
+- `latency_p50_s`
+- `latency_p95_s`
+- `failed`
+
+This endpoint benchmark cannot implement TokenTiming by itself. TokenTiming
+needs engine-level access to draft logits, retokenized proxy tokens, and target
+verification logits. Use this script to measure a server after integration.
 
 ## Python API
 
@@ -204,22 +353,6 @@ See:
 
 - [docs/minimax_m27_nvfp4_production.md](docs/minimax_m27_nvfp4_production.md)
 - [configs/minimax_m27_nvfp4_tokentiming_universal.json](configs/minimax_m27_nvfp4_tokentiming_universal.json)
-
-## Benchmark an OpenAI-Compatible Server
-
-After deploying a baseline server and a speculative server, compare them with:
-
-```bash
-python scripts/openai_compat_bench.py \
-  --base-url http://127.0.0.1:8000 \
-  --model nvidia/MiniMax-M2.7-NVFP4 \
-  --requests 64 \
-  --concurrency 4 \
-  --max-tokens 512 \
-  --temperature 0
-```
-
-The script reports latency, request QPS, output tokens/s, and failures.
 
 ## Tests
 

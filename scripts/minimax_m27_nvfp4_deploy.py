@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--engine", choices=["vllm", "sglang"], default="vllm")
     parser.add_argument(
         "--mode",
-        choices=["baseline", "peagle", "eagle3", "standalone", "ngram"],
+        choices=["baseline", "peagle", "eagle3", "standalone", "ngram", "token_itl"],
         default="peagle",
     )
     parser.add_argument("--target", default="nvidia/MiniMax-M2.7-NVFP4")

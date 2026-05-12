@@ -46,6 +46,24 @@ class TokenTimingDeploymentTest(unittest.TestCase):
         self.assertIn("--speculative-algorithm", command)
         self.assertIn("EAGLE3", command)
 
+    def test_sglang_token_itl_command_registers_custom_algorithm(self):
+        profile = ServingProfile(
+            engine="sglang",
+            mode="token_itl",
+            target_model="target",
+            draft_model="draft",
+            speculative_num_steps=4,
+            speculative_num_draft_tokens=5,
+        )
+        command = build_sglang_command(profile)
+
+        self.assertIn("--speculative-algorithm", command)
+        self.assertIn("TOKEN_ITL", command)
+        self.assertIn("--speculative-draft-model-path", command)
+        self.assertIn("draft", command)
+        self.assertIn("--disable-overlap-schedule", command)
+        self.assertIn("--disable-cuda-graph", command)
+
     def test_profile_validation_requires_draft(self):
         profile = ServingProfile(
             engine="vllm",

@@ -38,6 +38,7 @@ Token-ITL focuses on that setting:
 - Dynamic Token Warping for heterogeneous token streams.
 - Draft top-1 probability projection onto target proxy tokens.
 - Hugging Face greedy verifier reference implementation.
+- SGLang `TOKEN_ITL` plugin for engine-level target verification.
 - Pair benchmark for target/draft acceptance-rate analysis.
 - vLLM/SGLang command generation for MiniMax-M2.7-NVFP4 serving profiles.
 - OpenAI-compatible endpoint benchmark utility.
@@ -54,6 +55,7 @@ tokentiming/
   config.py          # runtime configuration
   result.py          # generation traces and stats
   tokenization.py    # tokenizer adapter
+  sglang/            # SGLang TOKEN_ITL plugin and worker
 
 scripts/
   tokentiming_pair_bench.py        # target/draft pair benchmark
@@ -62,6 +64,7 @@ scripts/
 
 docs/
   tokentiming.md
+  sglang_token_itl.md
   heterogeneous_vocab_universal_draft.md
   minimax_m27_nvfp4_production.md
 
@@ -91,6 +94,12 @@ pip install -e ".[hf]"
 This installs the optional Hugging Face runtime dependencies declared in
 `pyproject.toml`.
 
+For SGLang engine integration:
+
+```bash
+pip install -e ".[sglang]"
+```
+
 ## Usage Guide
 
 ### 1. Decide Which Path You Need
@@ -102,6 +111,7 @@ Use this table to pick the correct entry point.
 | Check that the repo works | `python -m unittest discover -s tests -p 'test_tokentiming*.py'` |
 | Evaluate a target/draft pair | `scripts/tokentiming_pair_bench.py` |
 | Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
+| Serve with SGLang engine-level verification | `--speculative-algorithm TOKEN_ITL` |
 | Generate MiniMax-M2.7-NVFP4 serving commands | `scripts/minimax_m27_nvfp4_deploy.py` |
 | Benchmark an already running OpenAI-compatible server | `scripts/openai_compat_bench.py` |
 | Import the algorithm in Python | `tokentiming.dynamic_token_warping` and `tokentiming.map_top1_draft_probabilities` |
@@ -244,7 +254,74 @@ python scripts/minimax_m27_nvfp4_deploy.py \
 
 Use `--run` only when you want the helper to execute the printed command.
 
-### 6. Benchmark a Running Server
+### 6. Run SGLang TOKEN_ITL
+
+`TOKEN_ITL` is an out-of-tree SGLang plugin. It uses an ordinary HF draft model
+to propose text, retokenizes that text with the target tokenizer, then verifies
+the target proxy tokens through SGLang's internal spec-v1 target verifier.
+
+Install this repo in the same environment as SGLang:
+
+```bash
+pip install -e ".[sglang]"
+export SGLANG_PLUGINS=token_itl
+```
+
+Start SGLang with the custom algorithm:
+
+```bash
+export TOKEN_ITL_DRAFT_DEVICE=cuda:0
+export TOKEN_ITL_DRAFT_DTYPE=bfloat16
+export TOKEN_ITL_DTW_WINDOW=8
+
+python -m sglang.launch_server \
+  --model-path nvidia/MiniMax-M2.7-NVFP4 \
+  --trust-remote-code \
+  --tp 8 \
+  --quantization modelopt_fp4 \
+  --speculative-algorithm TOKEN_ITL \
+  --speculative-draft-model-path Qwen/Qwen2.5-1.5B-Instruct \
+  --speculative-num-steps 4 \
+  --speculative-num-draft-tokens 5 \
+  --disable-overlap-schedule \
+  --disable-cuda-graph
+```
+
+Use greedy requests:
+
+```bash
+curl http://localhost:30000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nvidia/MiniMax-M2.7-NVFP4",
+    "messages": [{"role": "user", "content": "解释 TokenTiming 的异构词表验证流程"}],
+    "temperature": 0,
+    "max_tokens": 256
+  }'
+```
+
+The deployment helper can print the same shape of command:
+
+```bash
+python scripts/minimax_m27_nvfp4_deploy.py \
+  --engine sglang \
+  --mode token_itl \
+  --draft Qwen/Qwen2.5-1.5B-Instruct \
+  --tp 8 \
+  --port 30000
+```
+
+Current SGLang scope:
+
+- greedy decoding only (`temperature=0`),
+- text-only requests,
+- no overlap scheduler, target CUDA graph, DP attention, or pipeline parallelism,
+- target verification and KV mutation are inside SGLang; draft proposal is still
+  an HF draft model inside the plugin worker.
+
+Full details: [docs/sglang_token_itl.md](docs/sglang_token_itl.md)
+
+### 7. Benchmark a Running Server
 
 After starting a vLLM/SGLang OpenAI-compatible endpoint, benchmark it with:
 
@@ -376,17 +453,18 @@ Implemented:
 - heterogeneous tokenizer retokenization,
 - DTW alignment,
 - top-1 draft probability mapping,
+- SGLang `TOKEN_ITL` plugin using SGLang's internal target verifier,
 - deployment and benchmark helpers.
 
 Not implemented as a production sampler:
 
 - full stochastic lossless residual sampling inside vLLM/SGLang,
-- optimized KV-cache engine integration,
+- optimized draft-side KV-cache integration inside SGLang,
 - target-specific speculator training.
 
-The next production step is to move the TokenTiming alignment and block
-verification path into an inference engine worker instead of using the reference
-Hugging Face loop.
+The next production step is to keep per-request draft KV state inside the
+SGLang worker instead of regenerating the draft context through a HF model each
+verification block.
 
 ## License
 

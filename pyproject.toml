@@ -22,6 +22,17 @@ hf = [
   "sentencepiece>=0.2",
   "safetensors>=0.4"
 ]
+sglang = [
+  "sglang>=0.5.11",
+  "torch",
+  "transformers>=4.40",
+  "accelerate",
+  "sentencepiece>=0.2",
+  "safetensors>=0.4"
+]
+
+[project.entry-points."sglang.srt.plugins"]
+token_itl = "tokentiming.sglang.plugin:activate"
 
 [tool.setuptools]
-packages = ["tokentiming"]
+packages = ["tokentiming", "tokentiming.sglang"]

@@ -9,7 +9,7 @@ from typing import Literal
 
 
 Engine = Literal["vllm", "sglang"]
-Mode = Literal["baseline", "peagle", "eagle3", "standalone", "ngram"]
+Mode = Literal["baseline", "peagle", "eagle3", "standalone", "ngram", "token_itl"]
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class ServingProfile:
     extra_args: tuple[str, ...] = field(default_factory=tuple)
 
     def validate(self) -> None:
-        if self.mode in {"peagle", "eagle3", "standalone"} and not self.draft_model:
+        if self.mode in {"peagle", "eagle3", "standalone", "token_itl"} and not self.draft_model:
             raise ValueError(f"{self.mode} mode requires draft_model.")
         if self.port <= 0 or self.port > 65535:
             raise ValueError("port must be in [1, 65535].")
@@ -139,6 +139,21 @@ def build_sglang_command(profile: ServingProfile) -> list[str]:
         ]
     elif profile.mode == "ngram":
         command += ["--speculative-algorithm", "NGRAM"]
+    elif profile.mode == "token_itl":
+        command += [
+            "--speculative-algorithm",
+            "TOKEN_ITL",
+            "--speculative-draft-model-path",
+            str(profile.draft_model),
+            "--speculative-num-steps",
+            str(profile.speculative_num_steps),
+            "--speculative-eagle-topk",
+            "1",
+            "--speculative-num-draft-tokens",
+            str(profile.speculative_num_draft_tokens),
+            "--disable-overlap-schedule",
+            "--disable-cuda-graph",
+        ]
 
     command += list(profile.extra_args)
     return command
@@ -172,6 +187,8 @@ def minimax_m27_nvfp4_profile(
         draft_model = None
     if engine == "sglang" and mode == "peagle":
         mode = "eagle3"
+    speculative_num_steps = 4
+    speculative_num_draft_tokens = 5 if mode == "token_itl" else 6
 
     return ServingProfile(
         engine=engine,
@@ -183,9 +200,9 @@ def minimax_m27_nvfp4_profile(
         max_model_len=max_model_len,
         quantization="modelopt_fp4" if engine == "sglang" else None,
         num_speculative_tokens=5,
-        speculative_num_steps=4,
+        speculative_num_steps=speculative_num_steps,
         speculative_eagle_topk=1,
-        speculative_num_draft_tokens=6,
+        speculative_num_draft_tokens=speculative_num_draft_tokens,
         parallel_drafting=True,
         trust_remote_code=True,
     )
@@ -218,4 +235,6 @@ def _vllm_speculative_config(profile: ServingProfile) -> dict[str, object] | Non
             "model": profile.draft_model,
             "num_speculative_tokens": profile.num_speculative_tokens,
         }
+    if profile.mode == "token_itl":
+        raise ValueError("token_itl mode is currently implemented for SGLang only.")
     raise ValueError(f"Unsupported vLLM speculative mode: {profile.mode}")

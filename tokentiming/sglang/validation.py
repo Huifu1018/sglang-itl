@@ -1,4 +1,4 @@
-"""SGLang server-argument validation for Token-ITL."""
+"""SGLang server-argument validation for TOKEN_ITL."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ DEFAULT_MAX_RUNNING_REQUESTS = 48
 
 
 def validate_server_args(server_args: object) -> None:
-    """Normalize SGLang server args for the Token-ITL custom algorithm.
+    """Normalize SGLang server args for the TOKEN_ITL custom algorithm.
 
     The current integration deliberately follows SGLang's spec-v1 NGRAM verify
     path: no overlap scheduling, no mixed chunk, no target CUDA graph, one

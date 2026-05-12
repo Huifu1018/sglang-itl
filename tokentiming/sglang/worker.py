@@ -1,4 +1,4 @@
-"""SGLang spec-v1 worker for Token-ITL heterogeneous draft proposals."""
+"""SGLang spec-v1 worker for TOKEN_ITL heterogeneous draft proposals."""
 
 from __future__ import annotations
 

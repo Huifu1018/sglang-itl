@@ -1,4 +1,4 @@
-"""Candidate-row helpers for the SGLang Token-ITL worker."""
+"""Candidate-row helpers for the SGLang TOKEN_ITL worker."""
 
 from __future__ import annotations
 

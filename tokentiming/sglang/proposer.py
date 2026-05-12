@@ -1,4 +1,4 @@
-"""HF draft proposer used by the SGLang Token-ITL worker."""
+"""HF draft proposer used by the SGLang TOKEN_ITL worker."""
 
 from __future__ import annotations
 

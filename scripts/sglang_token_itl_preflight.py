@@ -26,7 +26,7 @@ def main() -> None:
     args = parse_args()
     checks: list[dict[str, Any]] = []
 
-    _check_package(checks, "token-itl")
+    _check_package(checks, "sglang-itl")
     _check_entrypoint(checks)
     _check_sglang_registration(checks)
     _check_cuda(checks, allow_no_cuda=args.allow_no_cuda)

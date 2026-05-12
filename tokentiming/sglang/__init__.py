@@ -1,4 +1,4 @@
-"""SGLang integration for Token-ITL.
+"""SGLang integration for sglang-itl.
 
 The package is intentionally import-light. SGLang, torch, and transformers are
 only imported by the plugin/worker modules inside an SGLang runtime.

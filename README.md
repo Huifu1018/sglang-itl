@@ -1,6 +1,6 @@
-# Token-ITL
+# sglang-itl
 
-Token-ITL is a toolkit for heterogeneous-vocabulary speculative decoding. It is
+sglang-itl is a toolkit for heterogeneous-vocabulary speculative decoding. It is
 designed for the case where the target model and draft model use different
 tokenizers, and the draft model is an ordinary off-the-shelf causal language
 model rather than a target-specific MTP, EAGLE, or P-EAGLE speculator.
@@ -25,7 +25,7 @@ That assumption does not hold for many practical model pairs. For example, a
 large target such as MiniMax-M2.7-NVFP4 may need to be accelerated with a cheap
 general draft model from another family.
 
-Token-ITL focuses on that setting:
+sglang-itl focuses on that setting:
 
 - target and draft vocabularies may differ,
 - the draft model does not need target-specific training,
@@ -78,8 +78,8 @@ configs/
 Core tests do not require PyTorch or Transformers.
 
 ```bash
-git clone https://github.com/Huifu1018/Token-ITL.git
-cd Token-ITL
+git clone https://github.com/Huifu1018/sglang-itl.git
+cd sglang-itl
 python -m venv .venv
 source .venv/bin/activate
 python -m unittest discover -s tests -p 'test_tokentiming*.py'

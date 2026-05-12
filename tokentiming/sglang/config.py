@@ -1,4 +1,4 @@
-"""Configuration helpers for the SGLang Token-ITL plugin."""
+"""Configuration helpers for the SGLang TOKEN_ITL plugin."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _env_float(name: str, default: float | None) -> float | None:
 
 @dataclass(frozen=True)
 class TokenITLSGLangConfig:
-    """Runtime knobs read by the Token-ITL SGLang worker.
+    """Runtime knobs read by the SGLang TOKEN_ITL worker.
 
     SGLang does not currently expose plugin-owned CLI flags through the public
     parser, so integration-specific knobs are environment variables.

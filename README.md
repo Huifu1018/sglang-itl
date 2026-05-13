@@ -91,10 +91,10 @@ uv pip install "sglang-itl[sglang]"
 pip install "sglang-itl[sglang]"
 ```
 
-For an environment that must stay on SGLang 0.5.9, pin SGLang explicitly:
+The `sglang` extra pins SGLang to `0.5.9`:
 
 ```bash
-uv pip install "sglang==0.5.9" "sglang-itl[sglang]"
+sglang==0.5.9
 ```
 
 For HF-only pair evaluation without SGLang:
@@ -138,7 +138,7 @@ Use this table to pick the correct entry point.
 | Evaluate a target/draft pair | `sglang-itl-pair-bench` |
 | Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
 | Serve with SGLang engine-level verification | `--speculative-algorithm TOKEN_ITL` |
-| Launch SGLang TOKEN_ITL on 0.5.9/0.5.10 | `sglang-itl-launch` |
+| Launch SGLang TOKEN_ITL on 0.5.9 | `sglang-itl-launch` |
 | Check TOKEN_ITL deployment readiness | `sglang-itl-preflight` |
 | Generate MiniMax-M2.7-NVFP4 serving commands | `sglang-itl-minimax-m27` |
 | Benchmark an already running OpenAI-compatible server | `sglang-itl-bench` |
@@ -285,9 +285,9 @@ Use `--run` only when you want the helper to execute the printed command.
 
 `TOKEN_ITL` uses an ordinary HF draft model to propose text, retokenizes that
 text with the target tokenizer, then verifies the target proxy tokens through
-SGLang's internal spec-v1 target verifier. On SGLang versions with native custom
-speculative plugins it registers as `TOKEN_ITL`; on SGLang 0.5.9/0.5.10 it uses
-the `sglang-itl-launch` wrapper and routes through SGLang's NGRAM verifier.
+SGLang's internal spec-v1 target verifier. The packaged SGLang integration is
+pinned to SGLang 0.5.9 and uses the `sglang-itl-launch` wrapper to route
+through SGLang's NGRAM verifier.
 
 Install this package in the same environment as SGLang:
 

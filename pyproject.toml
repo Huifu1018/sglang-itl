@@ -29,7 +29,7 @@ hf = [
   "safetensors>=0.4"
 ]
 sglang = [
-  "sglang>=0.5.9,<0.6",
+  "sglang==0.5.9",
   "torch",
   "transformers>=4.40",
   "accelerate",

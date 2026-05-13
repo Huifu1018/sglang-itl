@@ -4,8 +4,8 @@ This integration registers a SGLang speculative algorithm named `TOKEN_ITL`.
 It targets ordinary draft models with a tokenizer different from the target
 model tokenizer.
 
-SGLang 0.5.9 and 0.5.10 do not expose the native out-of-tree speculative plugin
-registry. For those versions, use `sglang-itl-launch`; it rewrites
+SGLang 0.5.9 does not expose the native out-of-tree speculative plugin
+registry. Use `sglang-itl-launch`; it rewrites
 `TOKEN_ITL` to the built-in NGRAM spec-v1 parser path and patches the worker
 factory before SGLang starts.
 
@@ -22,6 +22,8 @@ For a deployment pinned to SGLang 0.5.9:
 ```bash
 uv pip install "sglang==0.5.9" "sglang-itl[sglang]"
 ```
+
+The `sglang` extra itself also pins `sglang==0.5.9`.
 
 Before the first PyPI release, install from GitHub:
 

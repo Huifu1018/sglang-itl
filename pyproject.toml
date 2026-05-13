@@ -29,7 +29,7 @@ hf = [
   "safetensors>=0.4"
 ]
 sglang = [
-  "sglang>=0.5.11",
+  "sglang>=0.5.9,<0.6",
   "torch",
   "transformers>=4.40",
   "accelerate",
@@ -45,6 +45,7 @@ sglang-itl-bench = "tokentiming.cli.openai_compat_bench:main"
 sglang-itl-minimax-m27 = "tokentiming.cli.minimax_m27_nvfp4_deploy:main"
 sglang-itl-pair-bench = "tokentiming.cli.tokentiming_pair_bench:main"
 sglang-itl-preflight = "tokentiming.cli.sglang_token_itl_preflight:main"
+sglang-itl-launch = "tokentiming.cli.sglang_token_itl_launch:main"
 
 [tool.setuptools.packages.find]
 include = ["tokentiming*"]

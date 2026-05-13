@@ -91,6 +91,12 @@ uv pip install "sglang-itl[sglang]"
 pip install "sglang-itl[sglang]"
 ```
 
+For an environment that must stay on SGLang 0.5.9, pin SGLang explicitly:
+
+```bash
+uv pip install "sglang==0.5.9" "sglang-itl[sglang]"
+```
+
 For HF-only pair evaluation without SGLang:
 
 ```bash
@@ -132,6 +138,7 @@ Use this table to pick the correct entry point.
 | Evaluate a target/draft pair | `sglang-itl-pair-bench` |
 | Run one prompt through the HF reference verifier | `examples/tokentiming_hf_demo.py` |
 | Serve with SGLang engine-level verification | `--speculative-algorithm TOKEN_ITL` |
+| Launch SGLang TOKEN_ITL on 0.5.9/0.5.10 | `sglang-itl-launch` |
 | Check TOKEN_ITL deployment readiness | `sglang-itl-preflight` |
 | Generate MiniMax-M2.7-NVFP4 serving commands | `sglang-itl-minimax-m27` |
 | Benchmark an already running OpenAI-compatible server | `sglang-itl-bench` |
@@ -276,15 +283,17 @@ Use `--run` only when you want the helper to execute the printed command.
 
 ### 6. Run SGLang TOKEN_ITL
 
-`TOKEN_ITL` is an out-of-tree SGLang plugin. It uses an ordinary HF draft model
-to propose text, retokenizes that text with the target tokenizer, then verifies
-the target proxy tokens through SGLang's internal spec-v1 target verifier.
+`TOKEN_ITL` uses an ordinary HF draft model to propose text, retokenizes that
+text with the target tokenizer, then verifies the target proxy tokens through
+SGLang's internal spec-v1 target verifier. On SGLang versions with native custom
+speculative plugins it registers as `TOKEN_ITL`; on SGLang 0.5.9/0.5.10 it uses
+the `sglang-itl-launch` wrapper and routes through SGLang's NGRAM verifier.
 
 Install this package in the same environment as SGLang:
 
 ```bash
 uv pip install "sglang-itl[sglang]"
-export SGLANG_PLUGINS=token_itl
+export SGLANG_PLUGINS=token_itl  # needed only on SGLang builds with native plugin loading
 ```
 
 Run preflight on the deployment host before starting the server:
@@ -305,7 +314,7 @@ export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
 export TOKEN_ITL_CLONE_DRAFT_CACHE=true
 export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
-python -m sglang.launch_server \
+sglang-itl-launch \
   --model-path nvidia/MiniMax-M2.7-NVFP4 \
   --trust-remote-code \
   --tp 8 \
@@ -314,6 +323,7 @@ python -m sglang.launch_server \
   --speculative-draft-model-path Qwen/Qwen2.5-1.5B-Instruct \
   --speculative-num-steps 4 \
   --speculative-num-draft-tokens 5 \
+  --speculative-ngram-max-bfs-breadth 1 \
   --disable-overlap-schedule \
   --disable-cuda-graph
 ```

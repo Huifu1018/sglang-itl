@@ -83,16 +83,19 @@ def build_vllm_command(profile: ServingProfile) -> list[str]:
 
 
 def build_sglang_command(profile: ServingProfile) -> list[str]:
-    """Build a ``python -m sglang.launch_server`` command."""
+    """Build an SGLang serving command."""
 
     profile.validate()
     if profile.engine != "sglang":
         raise ValueError("profile.engine must be 'sglang'.")
 
+    launcher = (
+        ["sglang-itl-launch"]
+        if profile.mode == "token_itl"
+        else ["python3", "-m", "sglang.launch_server"]
+    )
     command = [
-        "python3",
-        "-m",
-        "sglang.launch_server",
+        *launcher,
         "--model",
         profile.target_model,
         "--host",
@@ -151,6 +154,8 @@ def build_sglang_command(profile: ServingProfile) -> list[str]:
             "1",
             "--speculative-num-draft-tokens",
             str(profile.speculative_num_draft_tokens),
+            "--speculative-ngram-max-bfs-breadth",
+            "1",
             "--disable-overlap-schedule",
             "--disable-cuda-graph",
         ]

@@ -4,6 +4,11 @@ This integration registers a SGLang speculative algorithm named `TOKEN_ITL`.
 It targets ordinary draft models with a tokenizer different from the target
 model tokenizer.
 
+SGLang 0.5.9 and 0.5.10 do not expose the native out-of-tree speculative plugin
+registry. For those versions, use `sglang-itl-launch`; it rewrites
+`TOKEN_ITL` to the built-in NGRAM spec-v1 parser path and patches the worker
+factory before SGLang starts.
+
 ## Install
 
 ```bash
@@ -12,14 +17,21 @@ uv pip install "sglang-itl[sglang]"
 pip install "sglang-itl[sglang]"
 ```
 
+For a deployment pinned to SGLang 0.5.9:
+
+```bash
+uv pip install "sglang==0.5.9" "sglang-itl[sglang]"
+```
+
 Before the first PyPI release, install from GitHub:
 
 ```bash
 uv pip install "sglang-itl[sglang] @ git+https://github.com/Huifu1018/sglang-itl.git"
 ```
 
-SGLang discovers the plugin through the `sglang.srt.plugins` entry point. To
-load only this plugin when several SGLang plugins are installed:
+On SGLang versions with native custom speculative plugins, SGLang discovers the
+plugin through the `sglang.srt.plugins` entry point. To load only this plugin
+when several SGLang plugins are installed:
 
 ```bash
 export SGLANG_PLUGINS=token_itl
@@ -50,7 +62,7 @@ export TOKEN_ITL_ENABLE_DRAFT_CACHE=true
 export TOKEN_ITL_CLONE_DRAFT_CACHE=true
 export TOKEN_ITL_MAX_CACHED_REQUESTS=256
 
-python -m sglang.launch_server \
+sglang-itl-launch \
   --model-path nvidia/MiniMax-M2.7-NVFP4 \
   --trust-remote-code \
   --tp 8 \
@@ -59,6 +71,7 @@ python -m sglang.launch_server \
   --speculative-draft-model-path Qwen/Qwen2.5-1.5B-Instruct \
   --speculative-num-steps 4 \
   --speculative-num-draft-tokens 5 \
+  --speculative-ngram-max-bfs-breadth 1 \
   --disable-overlap-schedule \
   --disable-cuda-graph
 ```

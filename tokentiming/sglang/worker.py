@@ -14,12 +14,21 @@ from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
-from sglang.srt.observability.req_time_stats import set_time_batch
-from sglang.srt.observability.trace import get_global_tracing_enabled
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.ngram_info import NgramVerifyInput
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.speculative.spec_utils import generate_token_bitmask
+
+try:
+    from sglang.srt.observability.req_time_stats import set_time_batch
+    from sglang.srt.observability.trace import get_global_tracing_enabled
+except ModuleNotFoundError:
+
+    def set_time_batch(*args, **kwargs) -> None:
+        return None
+
+    def get_global_tracing_enabled() -> bool:
+        return False
 
 from .candidates import build_linear_candidate_rows
 from .config import TokenITLSGLangConfig
@@ -37,6 +46,55 @@ class TokenITLWorkerStats:
     proposed_proxy_tokens: int = 0
     accepted_draft_tokens: int = 0
     evicted_requests: int = 0
+
+
+def _result_field_names() -> set[str]:
+    return set(getattr(GenerationBatchResult, "__dataclass_fields__", {}))
+
+
+def _make_generation_result(
+    *,
+    logits_output,
+    next_token_ids,
+    accepted_tokens: int = 0,
+    accepted_per_req_cpu: list[int] | None = None,
+    can_run_cuda_graph: bool = False,
+    accept_lens=None,
+) -> GenerationBatchResult:
+    fields = _result_field_names()
+    kwargs = {
+        "logits_output": logits_output,
+        "next_token_ids": next_token_ids,
+        "can_run_cuda_graph": can_run_cuda_graph,
+        "accept_lens": accept_lens,
+    }
+    if "num_correct_drafts" in fields:
+        kwargs["num_correct_drafts"] = accepted_tokens
+        kwargs["num_correct_drafts_per_req_cpu"] = accepted_per_req_cpu
+    else:
+        kwargs["num_accepted_tokens"] = accepted_tokens
+        kwargs["accept_length_per_req_cpu"] = accepted_per_req_cpu
+    return GenerationBatchResult(
+        **{key: value for key, value in kwargs.items() if key in fields}
+    )
+
+
+def _spec_tensor(spec_info: object, modern_name: str, legacy_name: str):
+    if hasattr(spec_info, modern_name):
+        return getattr(spec_info, modern_name)
+    return getattr(spec_info, legacy_name)
+
+
+def _accept_lengths(verify_input: object):
+    if hasattr(verify_input, "num_correct_drafts"):
+        return getattr(verify_input, "num_correct_drafts")
+    return getattr(verify_input, "accept_length", None)
+
+
+def _accept_lens_for_result(verify_input: object):
+    if hasattr(verify_input, "num_accept_tokens"):
+        return getattr(verify_input, "num_accept_tokens")
+    return getattr(verify_input, "accept_length", None)
 
 
 class TokenITLWorker:
@@ -112,10 +170,10 @@ class TokenITLWorker:
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
             model_worker_batch = batch.get_model_worker_batch()
             batch_result = self.target_worker.forward_batch_generation(model_worker_batch)
-            return GenerationBatchResult(
+            return _make_generation_result(
                 logits_output=batch_result.logits_output,
                 next_token_ids=batch_result.next_token_ids,
-                num_correct_drafts=0,
+                accepted_tokens=0,
                 can_run_cuda_graph=batch_result.can_run_cuda_graph,
             )
 
@@ -131,17 +189,23 @@ class TokenITLWorker:
 
         model_worker_batch = batch.get_model_worker_batch()
         spec_info = model_worker_batch.spec_info
-        num_correct_drafts = 0
+        accepted_tokens = 0
         accept_lens = None
-        num_correct_drafts_per_req_cpu = None
+        accepted_per_req_cpu = None
 
         if model_worker_batch.forward_mode.is_target_verify():
             self.stats.verify_batches += 1
             if batch.has_grammar:
-                retrieve_next_token_cpu = spec_info.retrieve_next_token.cpu()
-                retrieve_next_sibling_cpu = spec_info.retrieve_next_sibling.cpu()
+                retrieve_next_token = _spec_tensor(
+                    spec_info, "retrieve_next_token", "retrive_next_token"
+                )
+                retrieve_next_sibling = _spec_tensor(
+                    spec_info, "retrieve_next_sibling", "retrive_next_sibling"
+                )
+                retrieve_next_token_cpu = retrieve_next_token.cpu()
+                retrieve_next_sibling_cpu = retrieve_next_sibling.cpu()
                 draft_tokens_cpu = spec_info.draft_token.view(
-                    spec_info.retrieve_next_token.shape
+                    retrieve_next_token.shape
                 ).cpu()
 
             set_time_batch(batch.reqs, "set_spec_verify_start_time", trace_only=True)
@@ -167,30 +231,38 @@ class TokenITLWorker:
                 )
                 if vocab_mask is not None:
                     assert verify_input.grammar is not None
-                    vocab_mask = vocab_mask.to(verify_input.retrieve_next_token.device)
+                    retrieve_next_token = _spec_tensor(
+                        verify_input, "retrieve_next_token", "retrive_next_token"
+                    )
+                    vocab_mask = vocab_mask.to(retrieve_next_token.device)
                     batch.sampling_info.vocab_mask = None
 
-            logits_output, next_token_ids, num_correct_drafts = verify_input.verify(
+            logits_output, next_token_ids, accepted_tokens = verify_input.verify(
                 batch,
                 logits_output,
                 self.page_size,
                 vocab_mask,
             )
-            num_correct_drafts_per_req_cpu = (
-                verify_input.num_correct_drafts.cpu().tolist()
+            accept_lengths = _accept_lengths(verify_input)
+            accepted_per_req_cpu = (
+                accept_lengths.cpu().tolist() if accept_lengths is not None else None
             )
-            self.stats.accepted_draft_tokens += sum(num_correct_drafts_per_req_cpu)
+            if accepted_per_req_cpu is not None:
+                self.stats.accepted_draft_tokens += sum(accepted_per_req_cpu)
 
             if get_global_tracing_enabled():
                 for idx, req in enumerate(batch.reqs):
                     correct = (
-                        verify_input.num_correct_drafts[idx].item()
-                        if verify_input.num_correct_drafts is not None
+                        accept_lengths[idx].item()
+                        if accept_lengths is not None
                         else 0
                     )
-                    req.time_stats.set_spec_verify_end_time(num_correct_drafts=correct)
+                    if hasattr(req.time_stats, "set_spec_verify_end_time"):
+                        req.time_stats.set_spec_verify_end_time(
+                            num_correct_drafts=correct
+                        )
 
-            accept_lens = verify_input.num_accept_tokens
+            accept_lens = _accept_lens_for_result(verify_input)
             if batch.return_logprob:
                 add_output_logprobs_for_spec_v1(batch, verify_input, logits_output)
             self._evict_finished_requests(batch)
@@ -205,11 +277,11 @@ class TokenITLWorker:
                 batch_result.can_run_cuda_graph,
             )
 
-        return GenerationBatchResult(
+        return _make_generation_result(
             logits_output=logits_output,
             next_token_ids=next_token_ids,
-            num_correct_drafts=num_correct_drafts,
-            num_correct_drafts_per_req_cpu=num_correct_drafts_per_req_cpu,
+            accepted_tokens=accepted_tokens,
+            accepted_per_req_cpu=accepted_per_req_cpu,
             can_run_cuda_graph=can_run_cuda_graph,
             accept_lens=accept_lens,
         )

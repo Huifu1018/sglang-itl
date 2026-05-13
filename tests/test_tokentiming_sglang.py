@@ -11,6 +11,11 @@ from tokentiming.sglang.candidates import build_linear_candidate_rows
 from tokentiming.sglang.config import TokenITLSGLangConfig
 from tokentiming.sglang.proposer import _clone_nested_tensors
 from tokentiming.sglang.validation import validate_server_args
+from tokentiming.cli.sglang_token_itl_launch import (
+    _ensure_legacy_ngram_flags,
+    _rewrite_token_itl_to_ngram,
+    _token_itl_requested,
+)
 
 
 class TokenITLSGLangValidationTest(unittest.TestCase):
@@ -89,6 +94,24 @@ class TokenITLSGLangValidationTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             validate_server_args(args)
+
+    def test_legacy_launcher_rewrites_token_itl_to_ngram(self):
+        args = ["--model-path", "target", "--speculative-algorithm", "TOKEN_ITL"]
+
+        self.assertTrue(_token_itl_requested(args))
+        rewritten = _rewrite_token_itl_to_ngram(args)
+
+        self.assertEqual(rewritten[-1], "NGRAM")
+
+    def test_legacy_launcher_adds_required_ngram_flags(self):
+        args = ["--speculative-algorithm", "NGRAM"]
+
+        rewritten = _ensure_legacy_ngram_flags(args)
+
+        self.assertIn("--speculative-ngram-max-bfs-breadth", rewritten)
+        self.assertIn("1", rewritten)
+        self.assertIn("--disable-cuda-graph", rewritten)
+        self.assertIn("--disable-overlap-schedule", rewritten)
 
 
 if __name__ == "__main__":

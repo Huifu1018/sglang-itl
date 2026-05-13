@@ -72,18 +72,21 @@ def _check_sglang_registration(checks: list[dict[str, Any]]) -> None:
         import sglang  # noqa: F401
 
         sglang_version = _safe_version("sglang")
+        from tokentiming.sglang.compat import has_native_custom_spec_registry
         from tokentiming.sglang.plugin import activate
 
         activate()
         from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 
-        algo = SpeculativeAlgorithm.from_string("TOKEN_ITL")
+        native_registry = has_native_custom_spec_registry()
+        algo = SpeculativeAlgorithm.from_string("TOKEN_ITL" if native_registry else "NGRAM")
         checks.append(
             {
                 "name": "sglang_registration",
                 "ok": True,
                 "detail": {
                     "sglang_version": sglang_version,
+                    "mode": "native_plugin" if native_registry else "legacy_ngram_wrapper",
                     "algorithm": repr(algo),
                     "is_ngram_compatible": bool(algo.is_ngram()),
                     "supports_spec_v2": bool(algo.supports_spec_v2()),

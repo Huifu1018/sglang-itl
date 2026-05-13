@@ -9,8 +9,14 @@ from .validation import validate_server_args
 def activate() -> None:
     """Register TOKEN_ITL with SGLang's speculative algorithm registry."""
 
+    from .compat import patch_legacy_ngram_worker
+
     from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
-    from sglang.srt.speculative.spec_registry import CustomSpecAlgo, get_spec
+    try:
+        from sglang.srt.speculative.spec_registry import CustomSpecAlgo, get_spec
+    except ModuleNotFoundError:
+        patch_legacy_ngram_worker()
+        return
 
     if get_spec(TOKEN_ITL_ALGORITHM) is not None:
         return

@@ -57,10 +57,12 @@ class TokenTimingDeploymentTest(unittest.TestCase):
         )
         command = build_sglang_command(profile)
 
+        self.assertEqual(command[0], "sglang-itl-launch")
         self.assertIn("--speculative-algorithm", command)
         self.assertIn("TOKEN_ITL", command)
         self.assertIn("--speculative-draft-model-path", command)
         self.assertIn("draft", command)
+        self.assertIn("--speculative-ngram-max-bfs-breadth", command)
         self.assertIn("--disable-overlap-schedule", command)
         self.assertIn("--disable-cuda-graph", command)
 
